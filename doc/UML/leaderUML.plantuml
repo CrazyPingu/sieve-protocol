@@ -1,0 +1,43 @@
+@startuml leader
+!theme plain
+
+Waiting : Waiting for a proposal \nfrom a client or another process
+AddToLeaderBuffer : Add the proposal to the buffer
+DeliverOperation : Broadcast the operation to execute\nto all the other processes
+Elaboration : Elaborate the operation
+WaitingApproval : Waiting for the response of the\nother processes about the current operation
+RollBack : Rollback to the previus state.\nBroadcast to rollback to all the other processes
+NewSieveConfig : Change the leader
+Commit : Commit the operation and broadcast to\ncommit to all the other processes. Send\nthe correct result of the operation to the faulty ones
+
+[*] --> Waiting : [When the process is\nthe new leader]
+
+Waiting --> AddToLeaderBuffer: [Proposal received]
+
+AddToLeaderBuffer --> Waiting
+
+Waiting --> DeliverOperation: [Operation choosen from the buffer]
+
+DeliverOperation --> Elaboration
+
+Elaboration --> WaitingApproval: [Operation elaborated]
+
+WaitingApproval --> Commit : [Once received the majority of right values]
+
+WaitingApproval --> Abort : [If the majority of right values is not reached]
+
+Abort --> RollBack : [Rollback the operation]
+
+RollBack --> NewSieveConfig
+
+Commit --> Waiting
+
+WaitingApproval --> Abort : [Complain arrived]
+
+Waiting --l> Closing
+
+Closing --> [*]
+
+NewSieveConfig --> [*] : [Become non-leader process]
+
+@enduml

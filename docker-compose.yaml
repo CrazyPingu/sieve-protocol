@@ -1,0 +1,101 @@
+version: '3'
+
+services:
+  process1:
+    image: sieve-process:latest
+    ports:
+      - "8001:8001/udp"
+    environment:
+      PROCESS_ID: "1"
+      FAULTY: "0"
+      KEY2: "12"
+      KEY3: "13"
+      KEY4: "14"
+      KEY5: "15"
+      KEY6: "16"
+      KEY7: "17"
+
+  process2:
+    image: sieve-process:latest
+    ports:
+      - "8002:8002/udp"
+    environment:
+      PROCESS_ID: "2"
+      FAULTY: "0"
+      KEY1: "12"
+      KEY3: "23"
+      KEY4: "24"
+      KEY5: "25"
+      KEY6: "26"
+      KEY7: "27"
+
+  process3:
+    image: sieve-process:latest
+    ports:
+      - "8003:8003/udp"
+    environment:
+      PROCESS_ID: "3"
+      FAULTY: "100"
+      KEY1: "13"
+      KEY2: "23"
+      KEY4: "34"
+      KEY5: "35"
+      KEY6: "36"
+      KEY7: "37"
+
+  process4:
+    image: sieve-process:latest
+    ports:
+      - "8004:8004/udp"
+    environment:
+      PROCESS_ID: "4"
+      FAULTY: "100"
+      KEY1: "14"
+      KEY2: "24"
+      KEY3: "34"
+      KEY5: "45"
+      KEY6: "46"
+      KEY7: "47"
+
+  process5:
+    image: sieve-process:latest
+    ports:
+      - "8005:8005/udp"
+    environment:
+      PROCESS_ID: "5"
+      FAULTY: "0"
+      KEY1: "15"
+      KEY2: "25"
+      KEY3: "35"
+      KEY4: "45"
+      KEY6: "56"
+      KEY7: "57"
+
+  process6:
+    image: sieve-process:latest
+    ports:
+      - "8006:8006/udp"
+    environment:
+      PROCESS_ID: "6"
+      FAULTY: "0"
+      KEY1: "16"
+      KEY2: "26"
+      KEY3: "36"
+      KEY4: "46"
+      KEY5: "56"
+      KEY7: "67"
+
+  process7:
+    image: sieve-process:latest
+    ports:
+      - "8007:8007/udp"
+    environment:
+      PROCESS_ID: "7"
+      FAULTY: "0"
+      KEY1: "17"
+      KEY2: "27"
+      KEY3: "37"
+      KEY4: "47"
+      KEY5: "57"
+      KEY6: "67"
+

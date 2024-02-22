@@ -1,0 +1,58 @@
+@startuml slave
+!theme plain
+
+Waiting : Waiting for a proposal from a client\nor operation from the leader
+SendToLoader : Send the proposal to the loader
+'AddToQueue : Add operation to the queue (I)
+Elaboration : Elaborate the operation
+WaitingOrder : Waiting for the order from the leader
+Complain : Complain to the leader
+Commit : Commit the operation
+Abort : Abort the operation
+Rollback : Rollback to the previous state
+FixFaultyValue : Fix the result according to the leader
+NewSieveConfig : Update the sieve config with the new leader
+
+
+[*] --> Waiting
+
+Waiting --> SendToLoader: [Received proposal]
+
+SendToLoader --> Waiting
+
+Waiting --> Elaboration : [Received operation\nfrom the leader]
+
+'Waiting --> AddToQueue : [Received operation\nfrom the leader]
+
+'AddToQueue --> Elaboration
+
+Elaboration --> WaitingOrder : [Operation executed. Send approval to leader]
+
+WaitingOrder --> Complain : [Leader took too long to respond]
+
+WaitingOrder --> Commit : [Received order confirm]
+
+WaitingOrder --> Abort : [Receiver order abort]
+
+WaitingOrder --> FixFaultyValue : [Received order to fix the operation output]
+
+FixFaultyValue --> Commit
+
+Commit --> Waiting : [Received commit confirm]
+
+Abort --> Rollback
+
+Complain --> Waiting
+
+Rollback --> Waiting
+
+Waiting -->NewSieveConfig : [Received new sieve config]
+
+NewSieveConfig --> Waiting : [If the process is not the leader]
+
+NewSieveConfig --> [*] : [If the process is the new leader]
+
+Waiting --> Closing
+
+Closing --> [*]
+@enduml
