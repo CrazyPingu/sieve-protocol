@@ -4,7 +4,7 @@ from utils.msg import MessageComposer
 from utils.msg_variables import MsgKey, MsgType
 from rsm.env_config import HOST_MAP, PORT_MAP, CRYPTO_KEYS, PROCESS_ID, BUFFER_SIZE, N_FAULTY_PROCESSES, FAULTY, CLIENT_PID
 from utils.communication import Communication
-from utils.utils import OpQueue, State, signp, check_approve, check_validation_confirm, check_validation_abort, remove_unwanted_messages
+from utils.utils import OpQueue, State, signp, check_approve, check_validation_confirm, check_validation_abort, remove_unwanted_messages, reset_op_time
 from random import randint
 from time import sleep, time
 
@@ -58,11 +58,6 @@ class Process:
                 self.t, self.r = self.execute_operation(self.ex_time)
                 if self.t is not None:
                     self.s = State.WAITING_APPROVAL if self.leader == PROCESS_ID else State.WAITING_ORDER
-
-            if self.s == State.ABORT:
-                # self.s = State.S0
-                # self.next_epoch, self.next_leader = None, None
-                pass
 
             if self.s == State.NEW_CONFIG:
                 if self.new_sieve_config_start is not None and time() > self.new_sieve_config_start + NEW_SIEVE_CONFIG_THRESHOLD:
@@ -346,11 +341,9 @@ class Process:
         elif self.validation_predicate(message): #new_leader == self.next_leader and new_config <= self.next_epoch:
                 self.receive_buffer = remove_unwanted_messages(self.receive_buffer, MsgType.VALIDATION.value)
                 self.receive_buffer[sender_id] = message
-                #raise Exception("Error prima di len", self.receive_buffer, new_config, new_leader, message)
                 if len(self.receive_buffer) > 2 * N_FAULTY_PROCESSES:
                     self.start_epoch()
                 elif sender_id == new_leader:
-                    #raise Exception("Error in the new sieve config message", self.receive_buffer, new_config, new_leader, message)
                     self.start_new_sieve_config(new_config, new_leader)
 
     def receive_commit(self):
@@ -484,6 +477,7 @@ class Process:
         else:
             self.B, self.buffer_queue = {}, []
 
+        reset_op_time(self.I)
         self.s = State.S0
 
     def send_complain(self):

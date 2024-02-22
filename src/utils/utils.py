@@ -246,3 +246,14 @@ class OpQueue:
         """
 
         return self.ages
+
+
+def reset_op_time(queue: OpQueue):
+    """
+    Reset the age of the operations.
+
+    :param queue: operation queue
+    """
+
+    for op in queue.get_ages():
+        queue.ages[op] = time()
