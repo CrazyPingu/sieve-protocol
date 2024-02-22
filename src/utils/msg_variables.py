@@ -39,6 +39,7 @@ class MsgKey(Enum):
     S_STATE = "tc"  # speculative state
     S_RES = "rc"  # speculative response
     MSG_SET = "msg-set"  # set of messages
+    LEADER_BUFFER = "leader-buffer"
     DEBUG_FAULTY = "debug-faulty"
     DEBUG_EX_TIME = "debug-ex-time"  # debug option for execution time simulation
     DATA = "generic-data"

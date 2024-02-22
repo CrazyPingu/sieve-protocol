@@ -277,7 +277,8 @@ class MessageComposer:
         message = {
             MsgKey.TYPE.value: MsgType.NEW_SIEVE_CONFIG.value,
             MsgKey.CONFIG.value: c,
-            MsgKey.PID.value: p
+            MsgKey.PID.value: p,
+            MsgKey.DATA.value: None
         }
 
         return message

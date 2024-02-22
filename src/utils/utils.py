@@ -168,7 +168,7 @@ class OpQueue:
         :param op: operation to add
         """
 
-        self.queue.append(op)
+        self.queue.append(tuple(op))
         self.ages[tuple(op)] = time()
 
     def pop_left(self):
@@ -189,7 +189,7 @@ class OpQueue:
         :param op: operation to remove
         """
 
-        self.queue.remove(op)
+        self.queue.remove(tuple(op))
         self.ages.pop(tuple(op))
 
     def get_first(self):
@@ -227,7 +227,7 @@ class OpQueue:
         :return: True if the operation is in the queue, False otherwise
         """
 
-        return op in self.queue
+        return tuple(op) in self.queue
 
     def get_queue(self):
         """

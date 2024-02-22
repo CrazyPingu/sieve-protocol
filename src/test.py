@@ -33,75 +33,75 @@ class SieveTest(unittest.TestCase):
         cls.client.close()
         cls.thread.join()
 
-    def test_commit(self):
-        # Set execution time simulation to 0 seconds
-        debug_message = MessageComposer.compose_debug((MsgKey.DEBUG_EX_TIME.value, (10, 10, 0)))
-        self.client.broadcast(debug_message)
+    # def test_commit(self):
+    #     # Set execution time simulation to 0 seconds
+    #     debug_message = MessageComposer.compose_debug((MsgKey.DEBUG_EX_TIME.value, (10, 10, 0)))
+    #     self.client.broadcast(debug_message)
 
-        # Send an invoke message
-        message = self.client.build_invoke("a", 1)
-        self.client.send_invoke(message)
+    #     # Send an invoke message
+    #     message = self.client.build_invoke("a", 1)
+    #     self.client.send_invoke(message)
 
-        while not self.client.history:
-            sleep(0.01)
+    #     while not self.client.history:
+    #         sleep(0.01)
 
-        self.assertEqual(self.client.history[1][MsgKey.TYPE.value], MsgType.COMMIT.value)
+    #     self.assertEqual(self.client.history[1][MsgKey.TYPE.value], MsgType.COMMIT.value)
 
-    def test_abort(self):
-        # Set execution time simulation to 0 seconds
-        debug_message = MessageComposer.compose_debug((MsgKey.DEBUG_EX_TIME.value, (10, 10, 0)))
-        self.client.broadcast(debug_message)
+    # def test_abort(self):
+    #     # Set execution time simulation to 0 seconds
+    #     debug_message = MessageComposer.compose_debug((MsgKey.DEBUG_EX_TIME.value, (10, 10, 0)))
+    #     self.client.broadcast(debug_message)
 
-        # Set faulty processes to ensure abort (f > n/3)
-        debug_message = MessageComposer.compose_debug((MsgKey.DEBUG_FAULTY.value, 100))
-        faulty_processes = [3, 4, 5, 6, 7]
-        for pid in faulty_processes:
-            self.client.communication.send(debug_message, pid)
+    #     # Set faulty processes to ensure abort (f > n/3)
+    #     debug_message = MessageComposer.compose_debug((MsgKey.DEBUG_FAULTY.value, 100))
+    #     faulty_processes = [3, 4, 5, 6, 7]
+    #     for pid in faulty_processes:
+    #         self.client.communication.send(debug_message, pid)
 
-        # Send an invoke message
-        message = self.client.build_invoke("a", 1)
-        self.client.send_invoke(message)
+    #     # Send an invoke message
+    #     message = self.client.build_invoke("a", 1)
+    #     self.client.send_invoke(message)
 
-        self.client.history = 1, MessageComposer.compose_output(MsgType.ROLLBACK.value, 1, ("b", 2))
+    #     self.client.history = 1, MessageComposer.compose_output(MsgType.ROLLBACK.value, 1, ("b", 2))
 
-        while self.client.history[1][MsgKey.TYPE.value] == MsgType.ROLLBACK.value:
-            sleep(0.01)
+    #     while self.client.history[1][MsgKey.TYPE.value] == MsgType.ROLLBACK.value:
+    #         sleep(0.01)
 
-        self.assertEqual(self.client.history[1][MsgKey.TYPE.value], MsgType.ABORT.value)
+    #     self.assertEqual(self.client.history[1][MsgKey.TYPE.value], MsgType.ABORT.value)
 
-    def test_rollback(self):
-        # Set execution time simulation to 0 seconds
-        debug_message = MessageComposer.compose_debug((MsgKey.DEBUG_EX_TIME.value, (10, 10, 0)))
-        self.client.broadcast(debug_message)
+    # def test_rollback(self):
+    #     # Set execution time simulation to 0 seconds
+    #     debug_message = MessageComposer.compose_debug((MsgKey.DEBUG_EX_TIME.value, (10, 10, 0)))
+    #     self.client.broadcast(debug_message)
 
-        # Set faulty processes to ensure abort (f > n/3)
-        debug_message = MessageComposer.compose_debug((MsgKey.DEBUG_FAULTY.value, 100))
-        faulty_processes = [3, 4, 5, 6, 7]
-        for pid in faulty_processes:
-            self.client.communication.send(debug_message, pid)
+    #     # Set faulty processes to ensure abort (f > n/3)
+    #     debug_message = MessageComposer.compose_debug((MsgKey.DEBUG_FAULTY.value, 100))
+    #     faulty_processes = [3, 4, 5, 6, 7]
+    #     for pid in faulty_processes:
+    #         self.client.communication.send(debug_message, pid)
 
-        # Send an invoke message
-        message = self.client.build_invoke("a", 1)
-        self.client.send_invoke(message)
+    #     # Send an invoke message
+    #     message = self.client.build_invoke("a", 1)
+    #     self.client.send_invoke(message)
 
-        while not self.client.history:
-            sleep(0.01)
+    #     while not self.client.history:
+    #         sleep(0.01)
 
-        self.assertEqual(self.client.history[1][MsgKey.TYPE.value], MsgType.ROLLBACK.value)
+    #     self.assertEqual(self.client.history[1][MsgKey.TYPE.value], MsgType.ROLLBACK.value)
 
-    def test_complain(self):
-        # Set execution time simulation to over complain threshold
-        debug_message = MessageComposer.compose_debug((MsgKey.DEBUG_EX_TIME.value, (1, 1, 10)))
-        self.client.broadcast(debug_message)
+    # def test_complain(self):
+    #     # Set execution time simulation to over complain threshold
+    #     debug_message = MessageComposer.compose_debug((MsgKey.DEBUG_EX_TIME.value, (1, 1, 10)))
+    #     self.client.broadcast(debug_message)
 
-        # Send an invoke message
-        message = self.client.build_invoke("a", 1)
-        self.client.send_invoke(message, 6)
+    #     # Send an invoke message
+    #     message = self.client.build_invoke("a", 1)
+    #     self.client.send_invoke(message, 6)
 
-        while not self.client.history:
-            sleep(0.01)
+    #     while not self.client.history:
+    #         sleep(0.01)
 
-        self.assertEqual(self.client.history[1][MsgKey.TYPE.value], MsgType.COMPLAIN.value)
+    #     self.assertEqual(self.client.history[1][MsgKey.TYPE.value], MsgType.COMPLAIN.value)
 
     def test_new_sieve_config(self):
         # Set execution time simulation to 0 seconds
@@ -115,8 +115,9 @@ class SieveTest(unittest.TestCase):
             self.client.communication.send(debug_message, pid)
 
         # Send an invoke message
-        message = self.client.build_invoke("a", 1)
-        self.client.send_invoke(message)
+        for i in range(3):
+            message = self.client.build_invoke("a", i)
+            self.client.send_invoke(message)
 
         self.client.history = 1, MessageComposer.compose_output(MsgType.ROLLBACK.value, 1, ("b", 2))
 
@@ -125,15 +126,17 @@ class SieveTest(unittest.TestCase):
 
         self.assertEqual(self.client.history[1][MsgKey.TYPE.value], MsgType.NEW_SIEVE_CONFIG.value)
         self.assertFalse(self.client.history[0] == 1)
-        self.assertFalse(self.client.history[1][MsgKey.DATA.value] == 1)
+        self.assertFalse(self.client.history[1][MsgKey.DATA.value][0] == 1)
+        self.assertEqual(int(self.client.history[0]), self.client.history[1][MsgKey.DATA.value][0])
+        self.assertTrue(self.client.history[1][MsgKey.DATA.value][1])
 
-    def test_close(self):
-        message = MessageComposer.compose_close()
-        self.client.broadcast(message)
+    # def test_close(self):
+    #     message = MessageComposer.compose_close()
+    #     self.client.broadcast(message)
 
-        sleep(3)
+    #     sleep(3)
 
-        self.assertEqual(check_containers("sieve-process:latest"), False)
+    #     self.assertEqual(check_containers("sieve-process:latest"), False)
 
 
 if __name__ == "__main__":

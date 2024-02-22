@@ -10,7 +10,7 @@ from time import sleep, time
 
 
 OP_MAX_AGE = 3  # max age of an operation in seconds
-NEW_SIEVE_CONFIG_THRESHOLD = 5  # threshold for the new sieve config start
+NEW_SIEVE_CONFIG_THRESHOLD = 50  # threshold for the new sieve config start
 
 
 class Process:
@@ -60,16 +60,17 @@ class Process:
                     self.s = State.WAITING_APPROVAL if self.leader == PROCESS_ID else State.WAITING_ORDER
 
             if self.s == State.ABORT:
-                self.s = State.S0
-                self.next_epoch, self.next_leader = None, None
+                # self.s = State.S0
+                # self.next_epoch, self.next_leader = None, None
+                pass
 
             if self.s == State.NEW_CONFIG:
-                if self.new_sieve_config_start and time() > self.new_sieve_config_start + NEW_SIEVE_CONFIG_THRESHOLD:
+                if self.new_sieve_config_start is not None and time() > self.new_sieve_config_start + NEW_SIEVE_CONFIG_THRESHOLD:
                     self.new_sieve_config_start = None
                     self.receive_buffer = {}
-                if not self.new_sieve_config_start:
+                if self.new_sieve_config_start is None:
                     self.choose_new_leader()
-                    self.start_new_sieve_config(self.next_epoch, self.next_leader)
+                    self.start_new_sieve_config(self.next_epoch, self.next_leader, True)
                     self.new_sieve_config_start = time()
 
             sleep(0.01)
@@ -98,7 +99,7 @@ class Process:
         """
 
         while self.s != State.CLOSING:
-            if self.leader != PROCESS_ID:
+            if self.leader != PROCESS_ID and self.s != State.ABORT:
                 self.check_operations_age()
 
             sleep(0.1)
@@ -129,7 +130,8 @@ class Process:
         elif msg_type == MsgType.ORDER.value:
             self.receive_order(message)
         elif msg_type == MsgType.VALIDATION.value:
-            self.receive_validation(message, sender_id)
+            if self.s == State.WAITING_VALIDATION:
+                self.receive_validation(message, sender_id)
         elif msg_type == MsgType.COMMIT.value:
             self.receive_commit()
         elif msg_type == MsgType.ABORT.value:
@@ -152,10 +154,12 @@ class Process:
         for o, age in self.I.get_ages().items():
             if time() > age + OP_MAX_AGE:
                 if self.cur is not None:
+                    self.I.remove(o)
                     if o == tuple(self.cur):
                         self.send_complain()
                     else:
-                        self.I.remove(o)
+                        pass
+                    break
                         # TODO manda errore di comunicazione al gui
 
     ##########################################
@@ -302,15 +306,13 @@ class Process:
                     count_confirm += 1
 
             cur_op = self.cur
+            faulty_leader = False
 
             if self.t == State.COMMIT:
                 if count_confirm > N_FAULTY_PROCESSES:
                     res = MsgType.COMMIT.value
                     faulty_leader = PROCESS_ID not in self.last_order[MsgKey.MSG_SET.value].keys()
                     self.commit_operation(self.last_order)
-                    if faulty_leader:
-                        self.s = State.NEW_CONFIG
-                        # sleep(1)
                 else:
                     res = MsgType.ABORT.value
                     self.abort(True)
@@ -320,6 +322,8 @@ class Process:
 
             self.rsm_output(res, self.config, cur_op)
             self.receive_buffer = {}
+            if faulty_leader:
+                self.s = State.NEW_CONFIG
 
     def receive_new_sieve_config(self, message, sender_id):
         """
@@ -331,18 +335,22 @@ class Process:
 
         new_config, new_leader = message[MsgKey.CONFIG.value], message[MsgKey.PID.value]
 
-        if sender_id == self.leader and new_config > self.config:
+        if sender_id == self.leader and new_config > self.config and message[MsgKey.DATA.value] is not None:
             if self.next_leader is not None and new_leader != self.next_leader and new_config == self.next_epoch:
-                self.self.receive_buffer = {}
+                self.receive_buffer = {}
             self.next_epoch, self.next_leader = new_config, new_leader
             if PROCESS_ID == new_leader:
+                self.B, self.buffer_queue = message[MsgKey.LEADER_BUFFER.value]
+                sleep(2)
                 self.start_new_sieve_config(new_config, PROCESS_ID)
         elif self.validation_predicate(message): #new_leader == self.next_leader and new_config <= self.next_epoch:
                 self.receive_buffer = remove_unwanted_messages(self.receive_buffer, MsgType.VALIDATION.value)
                 self.receive_buffer[sender_id] = message
+                #raise Exception("Error prima di len", self.receive_buffer, new_config, new_leader, message)
                 if len(self.receive_buffer) > 2 * N_FAULTY_PROCESSES:
                     self.start_epoch()
                 elif sender_id == new_leader:
+                    #raise Exception("Error in the new sieve config message", self.receive_buffer, new_config, new_leader, message)
                     self.start_new_sieve_config(new_config, new_leader)
 
     def receive_commit(self):
@@ -384,8 +392,8 @@ class Process:
             self.last_order = None
         if self.I.check_presence(message[MsgKey.OPERATION.value]):
             self.I.remove(message[MsgKey.OPERATION.value])
-        self.s = State.S0
         self.t = None
+        self.s = State.S0
 
     def process_commit(self, message):
         """
@@ -416,11 +424,14 @@ class Process:
         """
 
         self.rollback()
+        self.next_epoch, self.next_leader = None, None
         if self.leader == PROCESS_ID:
             self.B.pop(self.cur_pid)
             self.communication.broadcast(MessageComposer.compose_abort(self.config, self.cur))
             if new_config:
                 self.s = State.NEW_CONFIG
+            else:
+                self.s = State.S0
 
     def rollback(self):
         """
@@ -431,7 +442,7 @@ class Process:
             self.rsm_output(MsgType.ROLLBACK.value, self.config, self.cur)
         self.cur = None
         self.t = None
-        self.s = State.ABORT if self.leader == PROCESS_ID else State.S0
+        self.s = State.ABORT  # if self.leader == PROCESS_ID else State.S0
 
     def choose_new_leader(self):
         """
@@ -443,7 +454,7 @@ class Process:
             self.next_leader = randint(1, len(HOST_MAP))
         self.next_epoch = self.config + 1
 
-    def start_new_sieve_config(self, e, p):
+    def start_new_sieve_config(self, e, p, start=False):
         """
         Start a new sieve config.
 
@@ -452,7 +463,12 @@ class Process:
         """
 
         if e > self.config:
-            self.communication.broadcast(MessageComposer.compose_new_sieve_config(e, p))
+            message = MessageComposer.compose_new_sieve_config(e, p)
+            if self.leader == PROCESS_ID:
+                message[MsgKey.LEADER_BUFFER.value] = (self.B, self.buffer_queue)
+                if start:
+                    message[MsgKey.DATA.value] = True
+            self.communication.broadcast(message)
 
     def start_epoch(self):
         """
@@ -462,10 +478,13 @@ class Process:
         self.receive_buffer = {}
         self.config, self.leader = self.next_epoch, self.next_leader
         self.t = None
-        self.s = State.S0
 
         if self.leader == PROCESS_ID:
-            self.rsm_output(MsgType.NEW_SIEVE_CONFIG.value, self.config, self.leader)
+            self.rsm_output(MsgType.NEW_SIEVE_CONFIG.value, self.config, (self.leader, self.B, self.buffer_queue))
+        else:
+            self.B, self.buffer_queue = {}, []
+
+        self.s = State.S0
 
     def send_complain(self):
         """
