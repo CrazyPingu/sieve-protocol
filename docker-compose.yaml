@@ -1,11 +1,13 @@
-version: '3'
+version: "2"
 
 services:
   process1:
     image: sieve-process:latest
     ports:
       - "8001:8001/udp"
+    container_name: process1
     environment:
+      N_PROCESSES: 7
       PROCESS_ID: "1"
       FAULTY: "0"
       KEY2: "12"
@@ -19,7 +21,9 @@ services:
     image: sieve-process:latest
     ports:
       - "8002:8002/udp"
+    container_name: process2
     environment:
+      N_PROCESSES: 7
       PROCESS_ID: "2"
       FAULTY: "0"
       KEY1: "12"
@@ -33,7 +37,9 @@ services:
     image: sieve-process:latest
     ports:
       - "8003:8003/udp"
+    container_name: process3
     environment:
+      N_PROCESSES: 7
       PROCESS_ID: "3"
       FAULTY: "100"
       KEY1: "13"
@@ -47,7 +53,9 @@ services:
     image: sieve-process:latest
     ports:
       - "8004:8004/udp"
+    container_name: process4
     environment:
+      N_PROCESSES: 7
       PROCESS_ID: "4"
       FAULTY: "100"
       KEY1: "14"
@@ -61,7 +69,9 @@ services:
     image: sieve-process:latest
     ports:
       - "8005:8005/udp"
+    container_name: process5
     environment:
+      N_PROCESSES: 7
       PROCESS_ID: "5"
       FAULTY: "0"
       KEY1: "15"
@@ -75,7 +85,9 @@ services:
     image: sieve-process:latest
     ports:
       - "8006:8006/udp"
+    container_name: process6
     environment:
+      N_PROCESSES: 7
       PROCESS_ID: "6"
       FAULTY: "0"
       KEY1: "16"
@@ -89,7 +101,9 @@ services:
     image: sieve-process:latest
     ports:
       - "8007:8007/udp"
+    container_name: process7
     environment:
+      N_PROCESSES: 7
       PROCESS_ID: "7"
       FAULTY: "0"
       KEY1: "17"

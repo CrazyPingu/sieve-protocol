@@ -1,9 +1,8 @@
 #!/bin/bash
 
-from time import time
 from enum import Enum
-from utils.msg_variables import MsgKey
 from hashlib import sha256
+from time import time
 
 
 class State(Enum):
@@ -26,21 +25,38 @@ class State(Enum):
     RUNNING = 12  # state for the gui
 
 
-def check_approve(message_buffer, config, o):
+def dict_to_list(dictionary: dict) -> list:
+    """
+    Convert a dictionary into a list.
+
+    Parameters:
+        dictionary: dictionary to convert
+
+    Returns:
+        the list containing the dictionary values
+    """
+
+    return list(dictionary.items())
+
+
+def check_approve(message_buffer: dict, config: int, operation) -> dict:
     """
     Check if the message buffer contains enough equal approve messages.
 
-    :param message_buffer: message buffer
-    :param config: epoch
-    :param o: operation
-    :return: The list of most approve messages with the same signature
+    Parameters:
+        message_buffer: buffer of the received messages
+        config: current epoch
+        operation: current operation
+
+    Returns:
+        The list of most approve messages with the same signature
     """
 
     pid_count = {}
 
     for pid, message in message_buffer.items():
-        if message[MsgKey.CONFIG.value] == config and message[MsgKey.OPERATION.value] == o:
-            sign = message[MsgKey.SIGN.value]
+        if message.c == config and message.o == operation:
+            sign = message.sign
             if sign not in pid_count.keys():
                 pid_count[sign] = [pid]
             else:
@@ -62,14 +78,17 @@ def check_approve(message_buffer, config, o):
     return res
 
 
-def check_validation_confirm(message_buffer, res, n_faulty_processes) -> bool:
+def check_validation_confirm(message_buffer: dict, res, n_faulty_processes: int) -> bool:
     """
     Check if the message buffer contains all equal approve messages.
 
-    :param message_buffer: buffer of the received messages
-    :param res: speculative response to validate
-    :param n_faulty_processes: number of faulty processes
-    :return: True if the message buffer contains all approve messages with the same signature, False otherwise
+    Parameters:
+        message_buffer: buffer of the received messages
+        res: speculative response to validate
+        n_faulty_processes: number of faulty processes
+
+    Returns:
+        True if the message buffer contains all approve messages with the same signature, False otherwise
     """
 
     if len(message_buffer) < n_faulty_processes + 1:
@@ -79,74 +98,102 @@ def check_validation_confirm(message_buffer, res, n_faulty_processes) -> bool:
     first_message = next(iter(message_buffer.values()))
 
     for _, message in message_buffer.items():
-        if message == first_message and verifyp(res, message[MsgKey.SIGN.value]):
+        if message == first_message and verifyp(res, message.sign):
             n_approve += 1
 
     return n_approve == len(message_buffer)
 
 
-def check_validation_abort(message_buffer, n_faulty_processes, config, o) -> bool:
+def check_validation_abort(message_buffer: dict, n_faulty_processes: int, config: int, operation) -> bool:
     """
     Check if the message buffer contains enough approve messages with incorrect signature.
-
-    :param message_buffer: buffer of the received messages
-    :param n_faulty_processes: number of faulty processes
-    :param config: current epoch
-    :param o: current operation
-    :return: True if the message buffer contains enough approve messages with incorrect signature, False otherwise
+    
+    Parameters:
+        message_buffer: buffer of the received messages
+        n_faulty_processes: number of faulty processes
+        config: current epoch
+        operation: current operation
+        
+    Returns:
+        True if the message buffer contains enough approve messages with incorrect signature, False otherwise
     """
 
     if len(message_buffer) < (2 * n_faulty_processes) + 1:
         return False
 
-    return len(check_approve(message_buffer, config, o)) < n_faulty_processes + 1
+    return len(check_approve(message_buffer, config, operation)) < n_faulty_processes + 1
 
 
-def remove_unwanted_messages(message_buffer, type):
+def remove_unwanted_messages(message_buffer: dict, msg_type: int) -> dict:
     """
     Remove unwanted messages from the message buffer.
 
-    :param message_buffer: buffer of the received messages
-    :param type: type of the message to remove
+    Parameters:
+        message_buffer: buffer of the received messages
+        msg_type: type of the message to remove
     """
 
     res = {}
 
     for pid, message in message_buffer.items():
-        if message[MsgKey.TYPE.value] != type:
+        if message.type != msg_type:
             res[pid] = message
 
     return res
 
 
-def encode_data(data):
+def compute_correct_rs(operation) -> object:
+    """
+    Compute the correct response to the operation.
+
+    Parameters:
+        operation: operation to compute the response
+
+    Returns:
+        the correct response to the operation
+    """
+
+    return operation
+
+
+def encode_data(data) -> bytes:
     """
     Encode data into utf-8 string.
 
-    :param data: data to encode
-    :return: encoded data
+    Parameters:
+        data: data to encode
+
+    Returns:
+        encoded data
     """
 
     return str(data).encode()
 
-def signp(data):
+
+def signp(data) -> str:
     """
     Sign the data.
 
-    :param data: data to sign
-    :return: signed data
+    Parameters:
+        data: data to sign
+
+    Returns:
+        signed data
     """
 
     return sha256(encode_data(data)).hexdigest()
 
 
-def verifyp(data, signature):
+def verifyp(data, signature) -> bool:
     """
     Verify the data.
 
-    :param data: data to verify
-    :param signature: signature to verify
-    :return: True if the signature is valid, False otherwise
+    Parameters:
+        data: data to verify
+        signature: signature to verify
+
+    Returns:
+        True if the signature is valid, False otherwise
     """
 
     return signp(data) == signature
@@ -154,106 +201,145 @@ def verifyp(data, signature):
 
 class OpQueue:
     """
-    Class representing the operation queue. It contains the operation queue and the relative ages.
+    Class representing the operation queue to execute to update the shared dictionary.
+    It contains the operation queue and the relative ages.
+
+    Attributes:
+        queue (list): list of operations to execute
+        ages (dict): dictionary containing the ages of the operations
     """
 
     def __init__(self):
         self.queue = []
         self.ages = {}
+        self.clients = {}
 
-    def add(self, op):
+    def add(self, op: list, sender_id: int) -> None:
         """
         Add an operation to the queue.
 
-        :param op: operation to add
+        Parameters:
+            op: operation to add
+            sender_id: id of the client sender
         """
 
         self.queue.append(tuple(op))
         self.ages[tuple(op)] = time()
+        self.clients[tuple(op)] = sender_id
 
-    def pop_left(self):
+    def pop_left(self) -> list:
         """
         Pop the first operation in the queue.
 
-        :return: the first operation in the queue
+        Returns:
+            the first operation in the queue
         """
 
         op = self.queue.pop(0)
         self.ages.pop(tuple(op))
         return op
 
-    def remove(self, op):
+    def remove(self, op: list) -> None:
         """
         Remove an operation from the queue.
 
-        :param op: operation to remove
+        Parameters:
+            op: operation to remove
         """
 
         self.queue.remove(tuple(op))
         self.ages.pop(tuple(op))
 
-    def get_first(self):
+    def get_first(self) -> tuple:
         """
         Get the first operation in the queue.
 
-        :return: the first operation in the queue
+        Returns:
+            the first operation in the queue
         """
 
         return self.queue[0]
 
-    def get(self, index):
+    def get(self, index: int) -> tuple:
         """
         Get the first operation in the queue.
 
-        :return: the operation at the given index in the queue
+        Parameters:
+            index: index of the operation to get
+
+        Returns:
+            the operation at the given index
         """
 
         return self.queue[index]
 
-    def is_empty(self):
+    def get_client_id(self, op: list) -> int:
+        """
+        Get the client id of the operation.
+
+        Parameters:
+            op: operation to get the client id
+
+        Returns:
+            the client id of the operation
+        """
+
+        return self.clients[tuple(op)]
+
+    def is_empty(self) -> bool:
         """
         Check if the queue is empty.
 
-        :return: True if the queue is empty, False otherwise
+        Returns:
+            True if the queue is empty, False otherwise
         """
 
         return len(self.queue) == 0
 
-    def check_presence(self, op):
+    def size(self) -> int:
+        """
+        Get the number of element in the queue.
+        """
+
+        return len(self.queue)
+
+    def check_presence(self, op: list) -> bool:
         """
         Check if the operation is in the queue.
 
-        :param op: operation to check
-        :return: True if the operation is in the queue, False otherwise
+        Parameters:
+            op: operation to check
+
+        Returns:
+            True if the operation is in the queue, False otherwise
         """
 
         return tuple(op) in self.queue
 
-    def get_queue(self):
+    def get_queue(self) -> list:
         """
         Get the queue.
 
-        :return: the queue
+        Returns:
+            the queue
         """
 
         return self.queue
 
-    def get_ages(self):
+    def get_ages(self) -> dict:
         """
         Get the ages.
 
-        :return: the ages
+        Returns:
+            the ages
         """
 
         return self.ages
 
+    def reset_operations_ages(self) -> None:
+        """
+        Reset the age of the operations.
+        """
 
-def reset_op_time(queue: OpQueue):
-    """
-    Reset the age of the operations.
-
-    :param queue: operation queue
-    """
-
-    for op in queue.get_ages():
-        queue.ages[op] = time()
+        for op in self.get_ages():
+            self.ages[op] = time()

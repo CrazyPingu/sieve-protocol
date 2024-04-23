@@ -3,10 +3,10 @@
 import sys
 
 # Global variables
-CLIENT_PID = 1000
+CLIENT_PID = int(sys.argv[1]) if len(sys.argv) > 1 else 1000
 CLIENT_SOCKET = ("127.0.0.1", 8000 + CLIENT_PID)
-N_PROCESSES = int(sys.argv[1]) if len(sys.argv) > 1 else 7
-BUFFER_SIZE = int(sys.argv[2]) if len(sys.argv) > 2 else 2048
+N_PROCESSES = int(sys.argv[1]) if len(sys.argv) > 2 else 7
+BUFFER_SIZE = int(sys.argv[2]) if len(sys.argv) > 3 else 8192
 CRYPTO_KEYS = {}  # {process_id: key}
 HOST_MAP = {}  # {process_id: host}
 PORT_MAP = {}  # {process_id: port}

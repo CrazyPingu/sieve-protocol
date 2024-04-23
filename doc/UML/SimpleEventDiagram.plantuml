@@ -1,0 +1,45 @@
+@startuml test
+
+Client -> "Slave Node a" : send operation
+
+"Slave Node a" -> "Leader Node" : redirect operation
+
+== Execute operation on all nodes ==
+"Leader Node" -> "Slave Node a" : execute operation
+"Leader Node" -> "Slave Node b" : execute operation
+"Leader Node" -> "Slave Node c" : execute operation
+"Leader Node" -> "Slave Node d" : execute operation
+
+== Return Approval to the leader ==
+"Slave Node a" -> "Leader Node" : return approval
+"Slave Node b" -> "Leader Node" : return approval
+"Slave Node c" -> "Leader Node" : return approval
+"Slave Node d" -> "Leader Node" : return approval
+
+== Leader Node sends order to all nodes ==
+"Leader Node" -> "Slave Node a" : send order
+"Leader Node" -> "Slave Node b" : send order
+"Leader Node" -> "Slave Node c" : send order
+"Leader Node" -> "Slave Node d" : send order
+
+== Slave nodes validate order ==
+"Slave Node a" -> "Leader Node" : order validation
+"Slave Node b" -> "Leader Node" : order validation
+"Slave Node c" -> "Leader Node" : order validation
+"Slave Node d" -> "Leader Node" : order validation
+
+== Leader Node sends decision to commit or to abort to all nodes ==
+"Leader Node" -> "Slave Node a" : send decision
+"Leader Node" -> "Slave Node b" : send decision
+"Leader Node" -> "Slave Node c" : send decision
+"Leader Node" -> "Slave Node d" : send decision
+
+"Leader Node" -> Client : Send result of operation
+
+
+
+
+
+
+
+@enduml

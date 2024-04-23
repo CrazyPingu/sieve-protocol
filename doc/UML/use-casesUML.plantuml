@@ -1,0 +1,22 @@
+@startuml use-cases
+!theme plain
+left to right direction
+
+actor Client as c
+actor Admin as a
+
+rectangle RSM {
+  usecase Start
+  usecase Stop
+  usecase "Add to db" as Execute
+  usecase "Request value" as RV
+}
+
+a --> Start
+a --> Stop
+c --> Execute : Send invoke
+Execute --> c : Send output status
+c --> RV
+RV --> c : Send response
+
+@enduml

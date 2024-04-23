@@ -1,25 +1,51 @@
 #!/bin/bash
 
-from utils.msg import MessageComposer
-from utils.msg_variables import MsgKey, MsgType
-from rsm.env_config import HOST_MAP, PORT_MAP, CRYPTO_KEYS, PROCESS_ID, BUFFER_SIZE, N_FAULTY_PROCESSES, FAULTY, CLIENT_PID
-from utils.communication import Communication
-from utils.utils import OpQueue, State, signp, check_approve, check_validation_confirm, check_validation_abort, remove_unwanted_messages, reset_op_time
 from random import randint
 from time import sleep, time
+from queue import Queue
 
+from rsm.env_config import HOST_MAP, PORT_MAP, CRYPTO_KEYS, PROCESS_ID, BUFFER_SIZE, N_FAULTY_PROCESSES, FAULTY
+from utils.communication import Communication
+from utils.msg import MessageComposer, Message
+from utils.msg_variables import MsgType
+from utils.utils import OpQueue, State, signp, check_approve, check_validation_confirm, check_validation_abort, \
+    remove_unwanted_messages, dict_to_list, compute_correct_rs
 
-OP_MAX_AGE = 3  # max age of an operation in seconds
-NEW_SIEVE_CONFIG_THRESHOLD = 50  # threshold for the new sieve config start
+COMPLAIN_THRESHOLD = 7  # threshold for the complain message
+OP_MAX_AGE = 4  # max age of an operation in seconds
+NEW_SIEVE_CONFIG_THRESHOLD = 3  # threshold for the new sieve config start
 
 
 class Process:
     """
     Class representing a process.
+
+    Attributes:
+        communication (Communication): communication object
+        I (OpQueue): queue of all operations invoked
+        config (int): sieve-config number (actual turn)
+        next_epoch (int): next config
+        s (State): actual state
+        t (State): speculative state
+        B (dict): leader's buffer
+        buffer_queue (list): buffer for FIFO execution of the operations in leader's buffer
+        clients_ids (dict): ids of the clients that invoked operations
+        leader (int): leader's process id
+        next_leader (int): next leaders process id
+        cur (list): current operation
+        cur_pid (int): current operation process id invoker
+        r (list): speculative response (in this case is equal to the operation)
+        msg_buffer (dict): buffer for approve, validation and new sieve config messages received
+        dictionary (dict): shared dictionary between processes
+        last_order (Message): last order received
+        faulty (int): indicates if the process is faulty for simulation
+        ex_time (tuple): debug option for execution time simulation
+        new_sieve_config_start (float): time of the start of the new sieve config
     """
 
     def __init__(self):
         self.communication = Communication(HOST_MAP, PORT_MAP, CRYPTO_KEYS, PROCESS_ID, BUFFER_SIZE)
+        self.receive_buffer = Queue()  # buffer for the received messages to be processed
         self.I = OpQueue()  # queue of all operations invoked
         self.config = 0  # sieve-config number (actual turn)
         self.next_epoch = None  # next config
@@ -27,12 +53,13 @@ class Process:
         self.t = None  # speculative state
         self.B = {}  # leader's buffer
         self.buffer_queue = []  # buffer for FIFO execution of the operations in leader's buffer
+        self.clients_ids = {}  # ids of the clients that invoked operations
         self.leader = 1  # leader"s process id (default 1)
         self.next_leader = None  # next leaders process id
         self.cur = None  # current operation
         self.cur_pid = None  # current operation process id invoker
         self.r = None  # speculative response (in this case is equal to the operation)
-        self.receive_buffer = {}  # buffer for approve, validation and new sieve config messages received
+        self.msg_buffer = {}  # buffer for approve, validation and new sieve config messages received
         self.dictionary = {}  # shared dictionary
         self.last_order = None  # last order received
         self.faulty = FAULTY  # indicates if the process is faulty for simulation
@@ -43,223 +70,266 @@ class Process:
     #   Thread functions
     ##########################################
 
-    def run(self):
+    def run(self) -> None:
         """
         Run the process.
         """
-        self.communication.broadcast(MessageComposer.compose_start())
-
         while self.s != State.CLOSING:
+
+            if not self.receive_buffer.empty():
+                message, sender_id = self.receive_buffer.get()
+                try:
+                    self.__route(message, int(sender_id))
+                except TypeError as e:
+                    pass
+                except Exception as e:
+                    print(f"Error in message type: {e}")
+                self.receive_buffer.task_done()
+
             if self.s == State.S0:
                 if self.B:
-                    self.request_execution(self.buffer_queue.pop(0))
+                    self.__request_execution(self.buffer_queue.pop(0))
 
             if self.s == State.ELABORATION:
-                self.t, self.r = self.execute_operation(self.ex_time)
+                self.t, self.r = self.__execute_operation(self.ex_time)
                 if self.t is not None:
-                    self.s = State.WAITING_APPROVAL if self.leader == PROCESS_ID else State.WAITING_ORDER
+                    self.s = self.t
 
             if self.s == State.NEW_CONFIG:
                 if self.new_sieve_config_start is not None and time() > self.new_sieve_config_start + NEW_SIEVE_CONFIG_THRESHOLD:
                     self.new_sieve_config_start = None
-                    self.receive_buffer = {}
+                    self.msg_buffer = {}
                 if self.new_sieve_config_start is None:
-                    self.choose_new_leader()
-                    self.start_new_sieve_config(self.next_epoch, self.next_leader, True)
+                    self.__choose_new_leader()
                     self.new_sieve_config_start = time()
+                    self.__start_new_sieve_config(self.next_epoch, self.next_leader, True)
 
             sleep(0.01)
 
         self.close()
 
-    def run_listener(self):
+    def run_listener(self) -> None:
         """
         Run the listener.
         """
 
         while self.s != State.CLOSING:
             message, sender_id = self.communication.receive()
-            # try:
-            self.route(message, int(sender_id))
-            # except TypeError as e:
-            #     pass
-            # except Exception as e:
-                # print(f"Error in message type: {e}")
+            if message is not None:
+                self.receive_buffer.put((message, sender_id))
 
             sleep(0.01)
 
-    def run_check_age(self):
+    def run_check_age(self) -> None:
         """
         Check the age of the operations.
         """
 
         while self.s != State.CLOSING:
             if self.leader != PROCESS_ID and self.s != State.ABORT:
-                self.check_operations_age()
+                self.__check_operations_age()
 
             sleep(0.1)
 
-    def route(self, message, sender_id):
+    def __route(self, message: Message, sender_id: int) -> None:
         """
-        Redirect to executor.
+        Given a message, route it to the right handler.
 
-        :param message: message received
-        :param sender_id: id of the process that sent the message
-        """
-
-        msg_type = message[MsgKey.TYPE.value]
-
-        if msg_type == MsgType.CLIENT_INVOKE.value:
-            self.rsm_execute(message[MsgKey.OPERATION.value])
-        elif msg_type == MsgType.INVOKE.value:
-            self.receive_invoke(message, sender_id)
-        elif msg_type == MsgType.EXECUTE.value:
-            self.receive_execute(message, sender_id)
-        elif msg_type == MsgType.APPROVE.value and self.leader == PROCESS_ID:
-            if self.s == State.WAITING_APPROVAL:
-                self.receive_approve(message, sender_id)
-        elif msg_type == MsgType.COMPLAIN.value:
-            self.receive_complain(message)
-        elif msg_type == MsgType.NEW_SIEVE_CONFIG.value:
-            self.receive_new_sieve_config(message, sender_id)
-        elif msg_type == MsgType.ORDER.value:
-            self.receive_order(message)
-        elif msg_type == MsgType.VALIDATION.value:
-            if self.s == State.WAITING_VALIDATION:
-                self.receive_validation(message, sender_id)
-        elif msg_type == MsgType.COMMIT.value:
-            self.receive_commit()
-        elif msg_type == MsgType.ABORT.value:
-            self.receive_abort()
-        elif msg_type == MsgType.CLOSE.value:
-            self.s = State.CLOSING
-        elif msg_type == MsgType.START.value:
-            # Permit saving the client udp data
-            pass
-        elif msg_type == MsgType.DEBUG.value:
-            self.receive_debug(message)
-        else:
-            raise Exception("Unknown message type:", msg_type)
-
-    def check_operations_age(self):
-        """
-        Check the age of the operations.
+        Parameters:
+            message: the message received
+            sender_id: the id of the process that sent the message
         """
 
-        for o, age in self.I.get_ages().items():
+        msg_type = message.type
+
+        match msg_type:
+            case MsgType.CLIENT_INVOKE.value:
+                self.__rsm_execute(message.o, sender_id)
+            case MsgType.INVOKE.value:
+                self.__receive_invoke(message, sender_id)
+            case MsgType.EXECUTE.value:
+                self.__receive_execute(message, sender_id)
+            case MsgType.APPROVE.value:
+                if self.s == State.WAITING_APPROVAL and self.leader == PROCESS_ID:
+                    self.__receive_approve(message, sender_id)
+            case MsgType.COMPLAIN.value:
+                self.__receive_complain(message)
+            case MsgType.NEW_SIEVE_CONFIG.value:
+                self.__receive_new_sieve_config(message, sender_id)
+            case MsgType.ORDER.value:
+                self.__receive_order(message)
+            case MsgType.VALIDATION.value:
+                if self.s == State.WAITING_VALIDATION:
+                    self.__receive_validation(message, sender_id)
+            case MsgType.COMMIT.value:
+                self.__receive_commit()
+            case MsgType.ABORT.value:
+                self.__receive_abort()
+            case MsgType.CLOSE.value:
+                self.s = State.CLOSING
+            case MsgType.REQUEST_VALUE.value:
+                self.__receive_request_value(message, sender_id)
+            case MsgType.START.value:
+                pass  # Permit saving the client udp data
+            case MsgType.DEBUG.value:
+                self.__receive_debug(message)
+            case _:
+                raise Exception("Unknown message type:", msg_type)
+
+    def __check_operations_age(self) -> None:
+        """
+        Check the age of the operations and act accordingly.
+        """
+
+        for o, age in self.I.get_ages().copy().items():
             if time() > age + OP_MAX_AGE:
                 if self.cur is not None:
                     self.I.remove(o)
                     if o == tuple(self.cur):
-                        self.send_complain()
+                        self.__send_complain()
                     else:
-                        pass
+                        self.__rsm_output(MsgType.OPERATION_NOT_QUEUED.value, self.config, o, self.clients_ids[o])
                     break
-                        # TODO manda errore di comunicazione al gui
+            elif self.cur is None:
+                client_id = self.I.get_client_id(o)
+                self.communication.send(MessageComposer.compose_invoke(self.config, o, client_id), self.leader)
 
     ##########################################
     #   Receive functions
     ##########################################
 
-    def receive_debug(self, message):
+    def __receive_debug(self, message: Message) -> None:
         """
         Logics for the DEBUG message.
 
-        :param message: message received
+        Parameters:
+            message: debug message received
         """
 
-        if message[MsgKey.DEBUG_FAULTY.value]:
-            self.faulty = message[MsgKey.DEBUG_FAULTY.value]
-        elif message[MsgKey.DEBUG_EX_TIME.value]:
-            self.ex_time = message[MsgKey.DEBUG_EX_TIME.value]
+        if message.debug_faulty:
+            self.faulty = message.debug_faulty
+        elif message.debug_ex_time:
+            self.ex_time = message.debug_ex_time
 
-    def receive_complain(self, message):
+    def __receive_complain(self, message: Message) -> None:
         """
         Logics for the COMPLAIN message (leader).
 
-        :param message: complain message received
+        Parameters:
+            message: complain message received
         """
 
-        if message[MsgKey.CONFIG.value] == self.config and message[MsgKey.OPERATION.value] == self.cur:
-            # Notifies the client of the complain
-            self.rsm_output(MsgType.COMPLAIN.value, self.config, self.cur)
+        if message.c == self.config and message.o == self.cur:
+            # Notifies the client of the complaint
+            self.__rsm_output(MsgType.COMPLAIN.value, self.config, self.cur, self.clients_ids[tuple(self.cur)])
 
-            self.abort(True)
+            self.__abort(True)
 
-    def rsm_execute(self, o):
+    def __rsm_execute(self, o: object, sender_id: int) -> None:
         """
         Logics for the receiving of a gui operation proposal. Add the operation to the queue.
 
-        :param o: operation
+        Parameters:
+            o: operation to execute
+            sender_id: id of the client that sent the message
         """
 
         if self.leader != PROCESS_ID:
-            self.I.add(o)
-            self.communication.send(MessageComposer.compose_invoke(self.config, o), self.leader)
+            self.I.add(o, sender_id)
+            self.clients_ids[tuple(o)] = sender_id
+            self.communication.send(MessageComposer.compose_invoke(self.config, o, sender_id), self.leader)
         else:
-            self.receive_invoke(MessageComposer.compose_invoke(self.config, o), PROCESS_ID)  # Treats the client invoke as a normal invoke
+            self.__receive_invoke(MessageComposer.compose_invoke(self.config, o, sender_id),
+                                  PROCESS_ID)  # Treats the client invoke as a normal invoke
 
-    def rsm_output(self, res, config, data):
+    def __rsm_output(self, res: object, config: int, data: object, client_id: int = None) -> None:
         """
-        Output of the operation result to the gui.
+        Output of the operation result to the client.
 
-        :param res: result status of the process to output
-        :param config: epoch number
-        :param data: data to output
-        """
-
-        self.communication.send(MessageComposer.compose_output(res, config, data), CLIENT_PID)
-
-    def receive_invoke(self, message, sender_id):
-        """
-        Logics for the INVOKE message (leader).
-
-        :param message: message received
-        :param sender_id: id of the process that sent the message
+        Parameters:
+            res: result status of the process to output
+            config: epoch number
+            data: data to output
+            client_id: id of the client to output the message to
         """
 
-        if self.leader == PROCESS_ID and message[MsgKey.CONFIG.value] == self.config and sender_id not in self.B.keys():
+        if client_id is not None:
+            self.communication.send(MessageComposer.compose_output(res, config, data), client_id)
+        else:
+            self.communication.broadcast_to_clients(MessageComposer.compose_output(res, config, data))
+
+    def __receive_request_value(self, message: Message, client_id: int) -> None:
+        """
+        Logics for the receiving of the REQUEST_VALUE message.
+
+        Parameters:
+            message: request value message received
+            client_id: id of the client that sent the message
+        """
+
+        if message.generic_data in self.dictionary.keys():
+            data = (message.generic_data, self.dictionary[message.generic_data])
+        else:
+            data = (message.generic_data, None)
+
+        self.__rsm_output(MsgType.REQUEST_VALUE.value, self.config, data, client_id)
+
+    def __receive_invoke(self, message: Message, sender_id: int) -> None:
+        """
+        Logics that handle the reception of an INVOKE message in case the process that called this method is the leader.
+
+        Parameters:
+            message: message received
+            sender_id: id of the process that sent the message
+        """
+
+        if self.leader == PROCESS_ID and message.c == self.config and sender_id not in self.B.keys():
             self.buffer_queue.append(sender_id)
-            self.B[sender_id] = message[MsgKey.OPERATION.value]
+            self.B[sender_id] = message.o
+            self.clients_ids[tuple(message.o)] = message.pid
 
-    def receive_execute(self, message, sender_id):
+    def __receive_execute(self, message: Message, sender_id: int) -> None:
         """
-        Logics for the EXECUTE message.
+        Logics for the receiving of the EXECUTE message.
 
-        :param message: message received
-        :param sender_id: id of the process that sent the message
+        Parameters:
+            message: message received
+            sender_id: id of the process that sent the message
         """
 
-        if message[MsgKey.CONFIG.value] == self.config and self.t is None:
-            self.cur = message[MsgKey.OPERATION.value]
-            self.t, self.r = self.execute_operation(self.ex_time)
+        if message.c == self.config and self.t is None:
+            self.cur = message.o
+            self.t, self.r = self.__execute_operation(self.ex_time)
+            self.s = self.t
             signature = signp(self.r)
-            self.communication.send(MessageComposer.compose_approve(self.config, message[MsgKey.OPERATION.value], signature),
+            self.communication.send(MessageComposer.compose_approve(self.config, message.o, signature),
                                     sender_id)
 
-    def receive_approve(self, message, sender_id):
+    def __receive_approve(self, message: Message, sender_id: int) -> None:
         """
         Logics for the receiving of all APPROVE messages (leader).
 
-        :param message: message received
-        :param sender_id: id of the process that sent the message
+        Parameters:
+            message: message received
+            sender_id: id of the process that sent the message
         """
 
-        self.receive_buffer[sender_id] = message
+        self.msg_buffer = remove_unwanted_messages(self.msg_buffer, MsgType.NEW_SIEVE_CONFIG.value)
+        self.msg_buffer[sender_id] = message
 
-        if len(self.receive_buffer) >= 2 * N_FAULTY_PROCESSES:
-            temp_buffer = self.receive_buffer.copy()  # copy the buffer that contains also the leader's message
+        if len(self.msg_buffer) >= 2 * N_FAULTY_PROCESSES:
+            temp_buffer = self.msg_buffer.copy()  # copy the buffer that contains also the leader's message
             temp_buffer[PROCESS_ID] = MessageComposer.compose_approve(self.config, self.cur, signp(self.r))
             correct_messages = check_approve(temp_buffer, self.config, self.cur)
-            # temp_buffer.pop(PROCESS_ID)
 
-            self.receive_buffer = remove_unwanted_messages(temp_buffer, MsgType.APPROVE.value)
+            self.msg_buffer = remove_unwanted_messages(temp_buffer, MsgType.APPROVE.value)
 
             if len(correct_messages) > N_FAULTY_PROCESSES:
                 # Propose COMMIT
-                message_to_send = MessageComposer.compose_order(
-                    MsgType.CONFIRM.value, self.config, self.cur, self.t.value, self.r, correct_messages)
                 self.t = State.COMMIT
+                r = self.r if PROCESS_ID in correct_messages.keys() else compute_correct_rs(self.cur)
+                message_to_send = MessageComposer.compose_order(
+                    MsgType.CONFIRM.value, self.config, self.cur, self.t.value, r, correct_messages)
                 self.last_order = message_to_send
                 self.communication.broadcast(message_to_send)
             else:
@@ -270,34 +340,37 @@ class Process:
 
             self.s = State.WAITING_VALIDATION
 
-    def receive_order(self, message):
+    def __receive_order(self, message: Message) -> None:
         """
         Logics for the receiving of the ORDER message (non-leader).
 
-        :param message: message received
+        Parameters:
+            message: message received
         """
 
         self.last_order = message
 
-        if message[MsgKey.DECISION.value] == MsgType.CONFIRM.value or message[MsgKey.DECISION.value] == MsgType.ABORT.value:
-            self.communication.send(MessageComposer.compose_validation(MsgType.CONFIRM.value if self.validation_predicate(message) else MsgType.ABORT.value, self.config, self.cur), self.leader)
+        if message.decision == MsgType.CONFIRM.value or message.decision == MsgType.ABORT.value:
+            self.communication.send(MessageComposer.compose_validation(
+                MsgType.CONFIRM.value if self.__validation_predicate(message) else MsgType.ABORT.value, self.config,
+                self.cur), self.leader)
 
-    def receive_validation(self, message, sender_id):
+    def __receive_validation(self, message: Message, sender_id: int) -> None:
         """
         Logics for the receiving of VALIDATION messages to reach consensus.
 
-        :param message: message received
-        :param sender_id: id of the process that sent the message
+        Parameters:
+            message: message received
+            sender_id: id of the process that sent the message
         """
 
-        self.receive_buffer[sender_id] = message
+        self.msg_buffer[sender_id] = message
 
-        if len(self.receive_buffer) > 2 * N_FAULTY_PROCESSES:
-
+        if len(self.msg_buffer) > 2 * N_FAULTY_PROCESSES:
             res = None
             count_confirm = 0
-            for _, msg in self.receive_buffer.items():
-                if msg[MsgKey.DECISION.value] == MsgType.CONFIRM.value and msg[MsgKey.CONFIG.value] == self.config and msg[MsgKey.OPERATION.value] == self.cur:
+            for _, msg in self.msg_buffer.items():
+                if msg.decision == MsgType.CONFIRM.value and msg.c == self.config and msg.o == self.cur:
                     count_confirm += 1
 
             cur_op = self.cur
@@ -306,117 +379,110 @@ class Process:
             if self.t == State.COMMIT:
                 if count_confirm > N_FAULTY_PROCESSES:
                     res = MsgType.COMMIT.value
-                    faulty_leader = PROCESS_ID not in self.last_order[MsgKey.MSG_SET.value].keys()
-                    self.commit_operation(self.last_order)
+                    faulty_leader = PROCESS_ID not in self.last_order.msg_set.keys()
+                    self.__commit_operation(self.last_order)
                 else:
                     res = MsgType.ABORT.value
-                    self.abort(True)
+                    self.__abort(True)
             elif self.t == State.ABORT:
                 res = MsgType.ABORT.value
-                self.abort(count_confirm > N_FAULTY_PROCESSES)
+                self.__abort(count_confirm > N_FAULTY_PROCESSES)
 
-            self.rsm_output(res, self.config, cur_op)
-            self.receive_buffer = {}
+            self.__rsm_output(res, self.config, cur_op, self.clients_ids[tuple(cur_op)])
+            self.msg_buffer = {}
             if faulty_leader:
                 self.s = State.NEW_CONFIG
 
-    def receive_new_sieve_config(self, message, sender_id):
+    def __receive_new_sieve_config(self, message: Message, sender_id: int) -> None:
         """
         Logics for the receiving of the NEW_SIEVE_CONFIG message.
 
-        :param message: message received
-        :param sender_id: id of the process that sent the message
+        Parameters:
+            message: message received
+            sender_id: id of the process that sent the message
         """
 
-        new_config, new_leader = message[MsgKey.CONFIG.value], message[MsgKey.PID.value]
+        new_config, new_leader = message.c, message.pid
 
-        if sender_id == self.leader and new_config > self.config and message[MsgKey.DATA.value] is not None:
+        if sender_id == self.leader and new_config > self.config and message.generic_data:
             if self.next_leader is not None and new_leader != self.next_leader and new_config == self.next_epoch:
-                self.receive_buffer = {}
+                self.msg_buffer = {}
             self.next_epoch, self.next_leader = new_config, new_leader
             if PROCESS_ID == new_leader:
-                self.B, self.buffer_queue = message[MsgKey.LEADER_BUFFER.value]
-                sleep(2)
-                self.start_new_sieve_config(new_config, PROCESS_ID)
-        elif self.validation_predicate(message): #new_leader == self.next_leader and new_config <= self.next_epoch:
-                self.receive_buffer = remove_unwanted_messages(self.receive_buffer, MsgType.VALIDATION.value)
-                self.receive_buffer[sender_id] = message
-                if len(self.receive_buffer) > 2 * N_FAULTY_PROCESSES:
-                    self.start_epoch()
-                elif sender_id == new_leader:
-                    self.start_new_sieve_config(new_config, new_leader)
+                self.B, self.buffer_queue, self.clients_ids = message.leader_buffer
+                self.__start_new_sieve_config(new_config, PROCESS_ID)
+        elif self.__validation_predicate(message):
+            self.msg_buffer = remove_unwanted_messages(self.msg_buffer, MsgType.VALIDATION.value)
+            self.msg_buffer[sender_id] = message
+            if len(self.msg_buffer) > 2 * N_FAULTY_PROCESSES:
+                self.__start_epoch()
+                self.new_sieve_config_start = None
+            elif sender_id == new_leader:
+                self.__start_new_sieve_config(new_config, new_leader)
 
-    def receive_commit(self):
+    def __receive_commit(self) -> None:
         """
         Logics for the receiving of the COMMIT message.
-
-        :param message: message received
         """
 
-        self.process_commit(self.last_order)
-        self.receive_buffer = {}
+        self.__commit_operation(self.last_order)
+        self.msg_buffer = {}
 
-    def receive_abort(self):
+    def __receive_abort(self) -> None:
         """
         Logics for the receiving of the ABORT message.
-
-        :param message: message received
         """
 
-        self.abort()
-        self.receive_buffer = {}
+        self.__abort()
+        self.msg_buffer = {}
 
     ##########################################
     #   Commit operation
     ##########################################
 
-    def commit_operation(self, message):
+    def __commit_operation(self, message: Message) -> None:
         """
-        Logics of operation commit. It is executed when abv-deliver is received and c == self.config.
+        Logics of operation commit. It is executed when abv-deliver is received and the config in the message is equal
+        to the leader's config.
 
-        :param message: message to deliver
-        """
-
-        if self.leader == PROCESS_ID:
-            self.dictionary[self.r[0]] = self.r[1]
-            self.B.pop(self.cur_pid)
-            self.communication.broadcast(MessageComposer.compose_commit(self.config, self.cur))
-            self.cur = None
-            self.last_order = None
-        if self.I.check_presence(message[MsgKey.OPERATION.value]):
-            self.I.remove(message[MsgKey.OPERATION.value])
-        self.t = None
-        self.s = State.S0
-
-    def process_commit(self, message):
-        """
-        Logics of operation commit. It is executed when abv-deliver is received and c == self.config (non-leader).
-
-        :param message: message received
+        Parameters:
+            message: message to deliver
         """
 
-        if PROCESS_ID in message[MsgKey.MSG_SET.value].keys():
+        if str(PROCESS_ID) in message.msg_set.keys():
             self.dictionary[self.r[0]] = self.r[1]
             self.s = self.t
         else:
             # Fix faulty operation value
-            self.dictionary[message[MsgKey.S_RES.value][0]] = message[MsgKey.S_RES.value][1]
-            self.s = message[MsgKey.S_STATE.value]
-        self.cur = None
+            self.dictionary[message.rc[0]] = message.rc[1]
+            self.s = State(message.tc)
+
+        if self.leader == PROCESS_ID:
+            self.B.pop(self.cur_pid)
+            self.communication.broadcast(MessageComposer.compose_commit(self.config, self.cur))
+        if self.I.check_presence(message.o):
+            self.I.remove(message.o)
+
         self.last_order = None
+        self.cur = None
+        self.cur_pid = None
+        self.r = None
+        self.t = None
+        self.s = State.S0
 
     ##########################################
     #   Abort - Rollback - New Sieve Config
     ##########################################
 
-    def abort(self, new_config=False):
+    def __abort(self, new_config: bool = False) -> None:
         """
         Logics for the ABORT status (leader).
 
-        :param new_config: if True, the process starts a new sieve config
+        Parameters:
+            new_config: if True, the process starts a new sieve config
         """
 
-        self.rollback()
+        self.__rollback()
         self.next_epoch, self.next_leader = None, None
         if self.leader == PROCESS_ID:
             self.B.pop(self.cur_pid)
@@ -426,63 +492,65 @@ class Process:
             else:
                 self.s = State.S0
 
-    def rollback(self):
+    def __rollback(self) -> None:
         """
-        Rollback the operation.
+        Rollback to the previous state.
         """
 
         if self.leader == PROCESS_ID:
-            self.rsm_output(MsgType.ROLLBACK.value, self.config, self.cur)
+            self.__rsm_output(MsgType.ROLLBACK.value, self.config, self.cur, self.clients_ids[tuple(self.cur)])
         self.cur = None
         self.t = None
-        self.s = State.ABORT  # if self.leader == PROCESS_ID else State.S0
+        self.s = State.ABORT
 
-    def choose_new_leader(self):
+    def __choose_new_leader(self) -> None:
         """
-        Choose a new leader.
+        Choose the new leader and the new epoch.
         """
 
         self.next_leader = self.leader
         while self.next_leader == PROCESS_ID:
-            self.next_leader = randint(1, len(HOST_MAP))
+            self.next_leader = randint(1, len(HOST_MAP) - 1)
         self.next_epoch = self.config + 1
 
-    def start_new_sieve_config(self, e, p, start=False):
+    def __start_new_sieve_config(self, epoch: int, next_leader: int, start: bool = False) -> None:
         """
         Start a new sieve config.
 
-        :param e: next epoch number
-        :param p: next leader
+        Parameters:
+            epoch: next epoch number
+            next_leader: next leader process id
+            start: if True, the leader process starts the new sieve config
         """
 
-        if e > self.config:
-            message = MessageComposer.compose_new_sieve_config(e, p)
+        if epoch > self.config:
+            message = MessageComposer.compose_new_sieve_config(epoch, next_leader)
             if self.leader == PROCESS_ID:
-                message[MsgKey.LEADER_BUFFER.value] = (self.B, self.buffer_queue)
+                message.leader_buffer = [self.B, self.buffer_queue, dict_to_list(self.clients_ids)]
                 if start:
-                    message[MsgKey.DATA.value] = True
+                    message.generic_data = True
             self.communication.broadcast(message)
 
-    def start_epoch(self):
+    def __start_epoch(self) -> None:
         """
         Start the new epoch configuring the process with the new leader and the new epoch.
         """
 
-        self.receive_buffer = {}
+        self.msg_buffer = {}
         self.config, self.leader = self.next_epoch, self.next_leader
         self.t = None
 
         if self.leader == PROCESS_ID:
-            self.rsm_output(MsgType.NEW_SIEVE_CONFIG.value, self.config, (self.leader, self.B, self.buffer_queue))
+            self.__rsm_output(MsgType.NEW_SIEVE_CONFIG.value, self.config, (self.leader, self.B, self.buffer_queue))
         else:
-            self.B, self.buffer_queue = {}, []
+            self.B, self.buffer_queue, self.clients_ids = {}, [], {}
 
-        reset_op_time(self.I)
+        self.I.reset_operations_ages()
         self.s = State.S0
 
-    def send_complain(self):
+    def __send_complain(self) -> None:
         """
-        Send a complain message to the leader.
+        Send a COMPLAIN message to the leader.
         """
 
         self.communication.send(MessageComposer.compose_complain(self.config, self.cur, PROCESS_ID), self.leader)
@@ -491,11 +559,12 @@ class Process:
     #   Other operations
     ##########################################
 
-    def request_execution(self, pid):
+    def __request_execution(self, pid: int) -> None:
         """
         Request the execution of the operation (leader).
 
-        :param pid: process id
+        Parameters:
+            pid: process id of the process that invoked the operation
         """
 
         if pid in self.B.keys() and self.cur is None and self.leader == PROCESS_ID:
@@ -506,52 +575,56 @@ class Process:
             self.communication.broadcast(MessageComposer.compose_execute(self.config, self.cur))
             self.s = State.ELABORATION
 
-    def execute_operation(self, random_param=(1, 100, 20)) -> tuple:
+    def __execute_operation(self, random_param: tuple = (1, 100, 20)) -> tuple:
         """
         Execute the operation.
 
-        :param random_param: tuple (min, max, threshold) for the random execution time number generation
-        :return: tuple (t, r) where t is the speculative state and r is the speculative response
+        Parameters:
+            random_param: tuple (min, max, threshold) for the random execution time number generation
+
+        Returns:
+            tuple (t, r) where t is the speculative state and r is the speculative response
         """
 
         t = State.WAITING_APPROVAL if self.leader == PROCESS_ID else State.WAITING_ORDER
-        r = self.cur if not self.faulty else (
-            self.cur[0], str(self.cur[1]) + str("FAULTY") + str(PROCESS_ID))  # Add artificial error if process is faulty
+        r = self.cur if self.faulty == 0 else (
+            self.cur[0],
+            str(self.cur[1]) + str("FAULTY") + str(PROCESS_ID))  # Add artificial error if process is faulty
 
         # Simulate execution time
-        if randint(random_param[0], random_param[1]) <= random_param[2]:
-            for _ in range(int((OP_MAX_AGE + 1) / 0.01)):
-                if self.s == State.S0:
+        if randint(random_param[0], random_param[1]) <= random_param[2] and self.leader == PROCESS_ID:
+            for _ in range(int((COMPLAIN_THRESHOLD + 1) / 0.01)):
+                if self.s == State.NEW_CONFIG:
                     return None, None
                 sleep(0.01)
 
         return t, r
 
-    def close(self):
+    def close(self) -> None:
         """
-        Close the process and the communication. If the process is the leader,
-        it broadcasts the close message.
+        Close the process and the communication.
+        If the process is the leader, it broadcasts the close message.
         """
-
-        # The leader broadcast close message also to the gui
-        if self.leader == PROCESS_ID:
-            print("Closing the RSM")
-            #self.communication.broadcast(MessageComposer.compose_close(), True)
 
         self.communication.close()
 
-    def validation_predicate(self, message):
+    def __validation_predicate(self, message: Message) -> bool:
         """
         Check if the message is valid.
 
-        :param message: message to check
-        :return: True if the message is valid, False otherwise
+        Parameters:
+            message: message to check
+
+        Returns:
+            True if the message is valid, False otherwise
         """
 
-        if message[MsgKey.TYPE.value] == MsgType.ORDER.value and message[MsgKey.CONFIG.value] == self.config and message[MsgKey.OPERATION.value] == self.cur and check_validation_confirm(message[MsgKey.MSG_SET.value], self.r, N_FAULTY_PROCESSES):
+        if message.type == MsgType.ORDER.value and message.c == self.config and message.o == self.cur and check_validation_confirm(
+                message.msg_set, self.r, N_FAULTY_PROCESSES):
             return True
-        elif message[MsgKey.TYPE.value] == MsgType.ORDER.value and message[MsgKey.DECISION.value] == MsgType.ABORT.value and check_validation_abort(message[MsgKey.MSG_SET.value], N_FAULTY_PROCESSES, self.config, self.cur):
+        elif message.type == MsgType.ORDER.value and message.decision == MsgType.ABORT.value and check_validation_abort(
+                message.msg_set, N_FAULTY_PROCESSES, self.config, self.cur):
             return True
-        elif message[MsgKey.TYPE.value] == MsgType.NEW_SIEVE_CONFIG.value and message[MsgKey.CONFIG.value] <= self.next_epoch and message[MsgKey.PID.value] == self.next_leader:
+        elif message.type == MsgType.NEW_SIEVE_CONFIG.value and message.c <= self.next_epoch and message.pid == self.next_leader:
             return True
         return False

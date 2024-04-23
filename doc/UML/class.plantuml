@@ -1,0 +1,139 @@
+@startuml classes
+'!theme plain
+
+class Client {
+    - communication: Communication
+    - dictionary : Dict
+    - state : Enum
+    - start_gui()
+    - send_start()
+    - send_invoke(message : Message, receiver_id : int = None)
+    - close()
+}
+
+class Process {
+    - communication : Communication
+    - I : OpQueue
+    - config : int
+    - state : Enum
+    - leader : int
+    - cur : Dict
+    - dictionary : Dict
+    - leader_buffer : Dict
+    - check_operation_age()
+    - rsm_execute(operation)
+    - rsm_output(res : Enum, config : int, data : Object)
+    - commit_operation(message : Message)
+    - abort(new_config : Bool = false)
+    - rollback()
+    - send_complain()
+    - start_new_sieve_config(epoch : int, next_leader : int, start : bool = false)
+    - execute_operation()
+    - validation_predicate(message : Message)
+    - close()
+}
+
+class Communication {
+    - pid : int
+    - host : str
+    - port : int
+    - hosts_dict : Dict
+    - ports_dict : Dict
+    - keys_dict : Dict
+    - socket : Socket
+    + send(message : Message, receiver_id : int)
+    + broadcast(message : Message, include_client : bool = False)
+    + receive()
+    + close()
+}
+
+class Message {
+    - type : Enum
+    - config : int
+    - operation
+    - pid : int
+    - sign : str
+    - decision : Enum
+    - leader_buffer : List
+    - msg_set : Dict
+    - generic_data : Object
+}
+
+Enum State {
+    DELIVER_OPERATION
+    ELABORATION
+    WAITING_APPROVAL
+    COMPLAIN
+    LEADER_ELECTION
+    NEW_CONFIG
+    WAITING_ORDER
+    COMMIT
+    ABORT
+    CLOSING
+    WAITING_VALIDATION
+    RUNNING
+}
+
+Enum MsgType {
+    INVOKE
+    EXECUTE
+    APPROVE
+    ORDER
+    NEW_SIEVE_CONFIG
+    CONFIRM
+    ABORT
+    COMPLAIN
+    CLIENT_INVOKE
+    CLOSE
+    VALIDATION
+    COMMIT
+    START
+    DEBUG
+    ROLLBACK
+    REQUEST_VALUE
+}
+
+Enum MsgKey {
+    TYPE
+    CONFIG
+    OPERATION
+    PID
+    SIGN
+    DECISION
+    S_STATE
+    S_RES
+    MSG_SET
+    LEADER_BUFFER
+    DEBUG_FAULTY
+    DEBUG_EX_TIME
+    DATA
+}
+class OpQueue {
+    - queue : List
+    - ages : Dict
+    + add(operation)
+    + remove(operation)
+    + get(index : int)
+    + get_ages()
+    + get_ages()
+    + reset_operations_ages()
+}
+Class Gui {
+    + start_gui()
+    + stop()
+}
+
+
+Process *-- Communication
+Client *-- Communication
+
+Message <-- MsgType : Uses
+Message <-- MsgKey : Uses
+
+Process <-- State : Uses
+Process *-- OpQueue
+
+Client *-- Gui
+Message --> Process : Uses
+Message --> Client : Uses
+@enduml

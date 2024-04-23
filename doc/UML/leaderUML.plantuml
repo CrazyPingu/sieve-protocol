@@ -7,24 +7,34 @@ DeliverOperation : Broadcast the operation to execute\nto all the other processe
 Elaboration : Elaborate the operation
 WaitingApproval : Waiting for the response of the\nother processes about the current operation
 RollBack : Rollback to the previus state.\nBroadcast to rollback to all the other processes
-NewSieveConfig : Change the leader
+NewSieveConfig : Chose a new leader
 Commit : Commit the operation and broadcast to\ncommit to all the other processes. Send\nthe correct result of the operation to the faulty ones
+NewSieveConfigValidation : Wait for new sieve config validation messages
+
+
 
 [*] --> Waiting : [When the process is\nthe new leader]
 
-Waiting --> AddToLeaderBuffer: [Proposal received]
+Waiting --l> AddToLeaderBuffer: [Proposal received]
 
-AddToLeaderBuffer --> Waiting
+AddToLeaderBuffer --l> Waiting
 
 Waiting --> DeliverOperation: [Operation choosen from the buffer]
 
-DeliverOperation --> Elaboration
+DeliverOperation --l> Elaboration
 
 Elaboration --> WaitingApproval: [Operation elaborated]
 
-WaitingApproval --> Commit : [Once received the majority of right values]
+WaitingApproval --> WaitingValidationCommit : [Once received the majority of right values]
 
-WaitingApproval --> Abort : [If the majority of right values is not reached]
+WaitingValidationCommit --> Commit : [If the majority of validation messages agree]
+
+WaitingValidationCommit --> Abort : [If the majority of validation messages disagree]
+WaitingApproval --> WaitingValidationAbort : [If the majority of right values is not reached]
+
+WaitingValidationAbort --> Abort : [If the majority of validation messages agree]
+
+RollBack --> Waiting : [If the majority of validation messages disagree and the order was Abort]
 
 Abort --> RollBack : [Rollback the operation]
 
@@ -34,10 +44,14 @@ Commit --> Waiting
 
 WaitingApproval --> Abort : [Complain arrived]
 
-Waiting --l> Closing
+Waiting --> Closing
 
-Closing --> [*]
+Closing --> [*] : [When close message received]
 
-NewSieveConfig --> [*] : [Become non-leader process]
+NewSieveConfig --> NewSieveConfigValidation
+
+NewSieveConfigValidation --> [*] : [[If the majority of validation messages agree. Become non-leader process]
+
+NewSieveConfigValidation --> NewSieveConfig : [If the majority of validation messages disagree]
 
 @enduml

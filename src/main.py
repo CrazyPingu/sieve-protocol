@@ -1,12 +1,14 @@
 #!/bin/bash
 
-from process import Process
 from threading import Thread
-from time import sleep
-from utils.utils import State
+
+from process import Process
 
 
 def main():
+    """
+    Start the process and the listener threads for the docker container.
+    """
     p = Process()
 
     threads = []
@@ -25,7 +27,6 @@ def main():
 
     for t in threads:
         t.join()
-
 
 
 if __name__ == "__main__":

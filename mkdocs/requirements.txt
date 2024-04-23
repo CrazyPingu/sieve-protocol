@@ -1,0 +1,8 @@
+mkdocs
+mkdocs-autorefs
+mkdocs-gen-files
+mkdocs-literate-nav
+mkdocs-simple-blog
+mkdocs-section-index
+mkdocstrings
+mkdocstrings-python

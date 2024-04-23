@@ -1,0 +1,15 @@
+.highlight .gp, .highlight .go { /* Generic.Prompt, Generic.Output */
+    user-select: none;
+}
+
+.md-footer, footer a, .md-source-repo-text {
+    /*display: none;*/
+}
+
+td > code > a:link, td > code > a:visited, td > code > a {
+    color: var(--background) !important;
+}
+
+.md-source-repo-text>li {
+    display: none !important;
+}

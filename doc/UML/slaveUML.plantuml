@@ -11,7 +11,10 @@ Commit : Commit the operation
 Abort : Abort the operation
 Rollback : Rollback to the previous state
 FixFaultyValue : Fix the result according to the leader
-NewSieveConfig : Update the sieve config with the new leader
+NewSieveConfig : If new leader of the new sieve config is self, broadcast the new sieve config
+NewSieveConfigValidation : Wait for new sieve config validation messages
+ValidationOrder : Validate the operation result and send the validation message to the leader
+WaitingLeaderValidation : Wait for the leader final result
 
 
 [*] --> Waiting
@@ -30,11 +33,19 @@ Elaboration --> WaitingOrder : [Operation executed. Send approval to leader]
 
 WaitingOrder --> Complain : [Leader took too long to respond]
 
-WaitingOrder --> Commit : [Received order confirm]
+'WaitingOrder --> Commit : [Received order confirm]
 
-WaitingOrder --> Abort : [Receiver order abort]
+WaitingOrder --> ValidationOrder : [Received order to validate the operation output]
 
-WaitingOrder --> FixFaultyValue : [Received order to fix the operation output]
+ValidationOrder --> WaitingLeaderValidation
+
+WaitingLeaderValidation --> Commit : [Received leader commit]
+
+WaitingLeaderValidation --> Abort : [Received leader abort]
+
+'WaitingOrder --> Abort : [Receiver order abort]
+
+WaitingLeaderValidation --> FixFaultyValue : [Received order to fix the operation output]
 
 FixFaultyValue --> Commit
 
@@ -50,7 +61,11 @@ Waiting -->NewSieveConfig : [Received new sieve config]
 
 NewSieveConfig --> Waiting : [If the process is not the leader]
 
-NewSieveConfig --> [*] : [If the process is the new leader]
+NewSieveConfig --> NewSieveConfigValidation
+
+NewSieveConfigValidation --> Waiting : [If the majority of validation messages disagree]
+
+NewSieveConfigValidation --> [*] : [If the majority of validation messages agree with self as new leader]
 
 Waiting --> Closing
 

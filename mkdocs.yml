@@ -1,0 +1,37 @@
+site_name: Sieve Protocol
+repo_url: https://dvcs.apice.unibo.it/pika-lab/courses/ds/projects/ds-project-detuglie-artegiani-grateron-ay2324
+#repo_url: https://github.com/CrazyPingu/sieve-protocol
+repo_name: Sieve Protocol
+site_author: Samuele De Tuglie, Emanuele Artegiani, Pablo Sebastian Vargas Grateron
+
+theme:
+  name: simple-blog
+  locale: en
+
+docs_dir: mkdocs
+
+
+nav:
+- Home: index.md
+- Code Reference: reference/
+
+extra_css:
+- css/style.css
+
+plugins:
+  - search
+  - mkdocstrings:
+      enabled: !ENV [ENABLE_MKDOCSTRINGS, true]
+      default_handler: python
+      handlers:
+        python:
+          paths: [src]
+          options:
+            show_source: false
+  - gen-files:
+      scripts:
+        - mkdocs/gen_ref_pages.py
+  - literate-nav:
+      nav_file: SUMMARY.md
+#  - section-index
+

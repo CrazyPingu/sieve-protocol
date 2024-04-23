@@ -6,7 +6,6 @@ ADD requirements.txt .
 
 RUN pip install -r requirements.txt
 
-ENV N_PROCESSES=7
-ENV BUFFER_SIZE=2048
+ENV BUFFER_SIZE=8192
 
 CMD ["python", "./main.py"]

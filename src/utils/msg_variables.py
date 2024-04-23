@@ -23,6 +23,8 @@ class MsgType(Enum):
     START = 12
     DEBUG = 13
     ROLLBACK = 14
+    REQUEST_VALUE = 15
+    OPERATION_NOT_QUEUED = 16
 
 
 class MsgKey(Enum):
